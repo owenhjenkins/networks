@@ -6,8 +6,8 @@
 	<BODY>
 		<P><H1>Hello World!</H1></P>
 		<UL>
-			<LI><A href="/info.html">About Me</A></LI>
-			<LI><A href="/else.html">Anything Else</A></LI>
+			<LI><A href="http://localhost:5000/info.html">About Me</A></LI>
+			<LI>Anything Else</LI>
 		</UL>
 	</BODY>
 </HTML>

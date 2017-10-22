@@ -25,7 +25,7 @@ typedef struct http_req {
 	float version;
 	int header_num;
 	http_header** headers;
-	//char* body;
+	int status;
 } http_request;
 
 // global variables
@@ -36,7 +36,7 @@ void error(char *msg){
 	exit(1);
 }
 
-void display_incoming(char *address, char *port){
+void start_server(char *address, char *port){
 
 	printf("Attempting to initialize server at address %s.\n",  address);
 
@@ -123,6 +123,8 @@ void *handle_client(void *param){
 	bool connected = true;
 	while(connected){
 
+		//printf("	Connected ");		
+
 		char **lines = NULL;
 		bool http_read = false;
 		while(!http_read){
@@ -131,17 +133,14 @@ void *handle_client(void *param){
 			// read either the total number of characters, or buff_size
 			// return the number of characters read, in the buffer	
 			int n = read(socket, buffer, buff_size);
-			if(n < 0){
-				printf("\nERROR reading from socket, thread closed.");
-				result = 1;
-				pthread_exit(&result);
-			}
-			else if(n == 0)connected = false;
+			//printf("	Read %d", n);
+			if(n <= 0)connected = false;
 	
-			//printf("\nCONSIDERING %c", *buffer);
+			printf("\nCONSIDERING %c", *buffer);
 
 			if(*buffer == '\n' && check_newline){		
 			
+				printf("\n	-1-	%s", backlog);
 				char **new = malloc(sizeof(char *) * (line_num + 1));
 				if(!new)error("ERROR on malloc new");
 				for(int i = 0; i < line_num+1; i++){
@@ -153,9 +152,7 @@ void *handle_client(void *param){
 	
 				new[line_num] = backlog;
 				lines = new;
-				line_num++;			
-				
-				//printf("\nBacklog %s", backlog);	
+				line_num++;		
 
 				if(!backlog){
 					http_read = true;
@@ -167,9 +164,11 @@ void *handle_client(void *param){
 				check_newline = false;
 			} 
 			else if(*buffer == '\r'){
+				printf("\n	-2-	");
 				check_newline = true;
 			}
-			else{				
+			else{			
+				printf("\n	-3-	");	
 				char *new = malloc(sizeof(char) * (backlog_size + 1));
 				if(!new)error("ERROR on malloc new");
 				bzero(new, (backlog_size + 1));
@@ -187,11 +186,11 @@ void *handle_client(void *param){
 		
 		if(lines[0]){
 			printf("\nReceived HTTP Request:");
-			//print_lines(lines, line_num-1);
+			print_lines(lines, line_num-1);
 			//printf("\nParsing...");
 			http_request *req = parse_http(lines, line_num-1);
-			handle_req(socket, req);	
 			print_http(req);			
+			handle_req(socket, req);				
 			free_http(req);
 		}
 		free_lines(lines, line_num);
@@ -300,23 +299,79 @@ http_request* parse_http(char** lines, int line_num){
 	}
 	req->headers = headers;
 	req->header_num = line_num-1;
+	req->status = -1;
 	return req;
 }
 
 void handle_req(int socket, http_request *req){
-	char* path = req->path;
-	char buff[8192];
-	bzero(buff, 8192);
-	char file[10000];
-	bzero(file, 10000);
-	FILE *fp = fopen("index.html", "r");
-	fread(file, sizeof(char), 1000, fp);	
+		
+	int file_length;
+	char* file = get_file(req);
+	if(file)file_length = (int)strlen(file);
+	else{
+		file = "";
+		file_length = 0;
+	}
 
-	sprintf(buff, "HTTP/1.1 200 OK\r\nDate: Sun, 22 Oct 2017 00:00:00 BST\r\nContent-Type: text/html\r\nContent-Length: 1\r\n\r\n%s", file);
+	char* version = "HTTP/1.1";
+	char* status = get_status(req->status);
 
-	printf("\nSending: %s", buff);
-	//write(socket, buff, 1000);
-	write(socket, buff, 1);
+	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + file_length + 1;
+
+	//printf("\nGot total length %d", total_length);
+	char* buff = calloc(sizeof(char), total_length);
+	
+	sprintf(buff, "%s %d %s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n%s", version, req->status, status, file_length, file);
+ 
+	printf("\n\nHTTP Response Details ========== \n%s", buff);
+	write(socket, buff, total_length);
+	free(file);
+	free(buff);
+}
+
+char* get_status(int status){
+	switch(status){
+	case 200: return "OK";
+	case 400: return "Bad Request";
+	case 404: return "Not Found";
+	default: return "Internal Server Error";
+	}
+}
+
+char* get_file(http_request *req){
+	char *path = req->path;
+	if(strcmp(path, "/") == 0)path = "index.html";
+	else path = &path[1];
+
+	//printf("\nGot path %s", path);
+
+	FILE *fp = fopen(path, "r");
+	if(!fp){
+		req->status = 404;
+		return NULL;
+	}
+	
+	req->status = 200;
+
+	fseek(fp, 0, SEEK_END);
+	int size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);	
+
+	//printf("\nGot size %d", size);
+
+
+	char *buff = calloc(sizeof(char), size+1);
+	if(!buff)error("ERROR on calloc buff");
+
+	fread(buff, sizeof(char), size, fp);
+
+	//printf("\nGot buff size %d", (int)strlen(buff));
+	
+	//printf("\nGot FILE \n%s", buff);
+
+	req->status = 200;
+	fclose(fp);
+	return buff;		
 }
 
 void free_lines(char** lines, int line_num){

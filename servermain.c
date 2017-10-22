@@ -8,7 +8,7 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 	else{
-		display_incoming(argv[1], argv[2]);
+		start_server(argv[1], argv[2]);
 		return 0;
 	}
 }
