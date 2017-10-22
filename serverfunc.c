@@ -134,13 +134,18 @@ void *handle_client(void *param){
 			// return the number of characters read, in the buffer	
 			int n = read(socket, buffer, buff_size);
 			//printf("	Read %d", n);
-			if(n <= 0)connected = false;
-	
-			printf("\nCONSIDERING %c", *buffer);
+			if(n <= 0){
+				connected = false;				
+				//fprintf(stderr, "\n\nbroke http_read\n");
+				break;
+			}	
+			//if(*buffer == '\n')printf("\nCONSIDERING LF");
+			//else if(*buffer == '\r')printf("\nCONSIDERING CR");
+			//else printf("\nCONSIDERING %c", *buffer);
 
 			if(*buffer == '\n' && check_newline){		
 			
-				printf("\n	-1-	%s", backlog);
+				//printf("\nbacklog = %s", backlog);
 				char **new = malloc(sizeof(char *) * (line_num + 1));
 				if(!new)error("ERROR on malloc new");
 				for(int i = 0; i < line_num+1; i++){
@@ -156,6 +161,10 @@ void *handle_client(void *param){
 
 				if(!backlog){
 					http_read = true;
+					//printf("\n\nbreak\n");
+					backlog = NULL;
+					backlog_size = 1;
+					check_newline = false;
 					break;				
 				}
 
@@ -164,11 +173,11 @@ void *handle_client(void *param){
 				check_newline = false;
 			} 
 			else if(*buffer == '\r'){
-				printf("\n	-2-	");
+				//printf("\n	-2-	");
 				check_newline = true;
 			}
 			else{			
-				printf("\n	-3-	");	
+				//printf("\n	-3-	");	
 				char *new = malloc(sizeof(char) * (backlog_size + 1));
 				if(!new)error("ERROR on malloc new");
 				bzero(new, (backlog_size + 1));
@@ -184,17 +193,28 @@ void *handle_client(void *param){
 			}
 		}
 		
-		if(lines[0]){
-			printf("\nReceived HTTP Request:");
+		//fprintf(stderr, "\n\nCHECKPOINT 1\n");		
+		
+		if(lines){
+			char** start_lines = &lines[0];
+			while(!lines[0]){
+				free(lines[0]);
+				lines = &lines[1];
+				line_num--;	
+			}
+		
+			//fprintf(stderr, "\n\nCHECKPOINT 2\n");
+			//printf("\nReceived HTTP Request:\n");
 			print_lines(lines, line_num-1);
-			//printf("\nParsing...");
 			http_request *req = parse_http(lines, line_num-1);
 			print_http(req);			
 			handle_req(socket, req);				
 			free_http(req);
+
+			print_lines(lines, line_num-1);							
+			free_lines(lines, line_num);	
+			free(start_lines);
 		}
-		free_lines(lines, line_num);
-		free(lines);
 	}			
 
 	// close the socket when a client has disconnected
@@ -318,14 +338,14 @@ void handle_req(int socket, http_request *req){
 
 	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + file_length + 1;
 
-	//printf("\nGot total length %d", total_length);
+	printf("\nGot total length %d", total_length);
 	char* buff = calloc(sizeof(char), total_length);
 	
 	sprintf(buff, "%s %d %s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n%s", version, req->status, status, file_length, file);
  
-	printf("\n\nHTTP Response Details ========== \n%s", buff);
+	printf("\n\nHTTP Response Details ========== \n%s\n", buff);
 	write(socket, buff, total_length);
-	free(file);
+	if(file)free(file);
 	free(buff);
 }
 
