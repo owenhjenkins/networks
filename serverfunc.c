@@ -190,7 +190,7 @@ void *handle_client(void *param){
 			//print_lines(lines, line_num-1);
 			//printf("\nParsing...");
 			http_request *req = parse_http(lines, line_num-1);
-			handle_req(req);	
+			handle_req(socket, req);	
 			print_http(req);			
 			free_http(req);
 		}
@@ -301,6 +301,21 @@ http_request* parse_http(char** lines, int line_num){
 	req->headers = headers;
 	req->header_num = line_num-1;
 	return req;
+}
+
+void handle_req(int socket, http_request *req){
+	char* path = req->path;
+	char buff[8192];
+	bzero(buff, 8192);
+	char file[10000];
+	bzero(file, 10000);
+	FILE *fp = fopen("index.html", "r");
+	fread(file, sizeof(char), 1000, fp);	
+
+	sprintf(buff, "HTTP/1.1 200 OK\r\nDate: Sun, 22 Oct 2017 00:00:00 BST\r\nContent-Type: text/html\r\nContent-Length: 1000\r\n\r\n%s", file);
+
+	printf("\nSending: %s", buff);
+	write(socket, buff, 1000);
 }
 
 void free_lines(char** lines, int line_num){

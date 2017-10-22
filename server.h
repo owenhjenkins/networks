@@ -13,4 +13,4 @@ void print_lines(char**, int);
 void print_http(http_request*);
 char* method_str(http_method);
 
-void handle_req(http_request*);
+void handle_req(int, http_request*);
