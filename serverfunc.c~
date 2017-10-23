@@ -26,6 +26,7 @@ typedef struct http_req {
 	int header_num;
 	http_header** headers;
 	int status;
+	int content_length;
 } http_request;
 
 // global variables
@@ -211,7 +212,7 @@ void *handle_client(void *param){
 			handle_req(socket, req);				
 			free_http(req);
 
-			print_lines(lines, line_num-1);							
+			//print_lines(lines, line_num-1);							
 			free_lines(lines, line_num);	
 			free(start_lines);
 		}
@@ -319,32 +320,40 @@ http_request* parse_http(char** lines, int line_num){
 	}
 	req->headers = headers;
 	req->header_num = line_num-1;
-	req->status = -1;
+	req->status = 500;
+	req->content_length = 0;
 	return req;
 }
 
 void handle_req(int socket, http_request *req){
-		
+
 	int file_length;
 	char* file = get_file(req);
-	if(file)file_length = (int)strlen(file);
+	if(file)file_length = req->content_length;
 	else{
 		file = "";
 		file_length = 0;
 	}
 
+	//printf("\nFILE = %s", file);
+	printf("\nCONTENT-LENGTH = %d", file_length);
+	//fwrite(file, file_length, 1, stdout);
+
 	char* version = "HTTP/1.1";
 	char* status = get_status(req->status);
+	char* file_type = get_file_type(req);
 
-	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + file_length + 1;
+	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
 
 	printf("\nGot total length %d", total_length);
-	char* buff = calloc(sizeof(char), total_length);
-	
-	sprintf(buff, "%s %d %s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n%s", version, req->status, status, file_length, file);
+	char* buff = calloc(total_length + 1, sizeof(char));
+	if(!buff)error("ERROR on calloc buff");	
+
+	sprintf(buff, "%s %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
  
 	printf("\n\nHTTP Response Details ========== \n%s\n", buff);
 	write(socket, buff, total_length);
+	write(socket, file, file_length);
 	if(file)free(file);
 	free(buff);
 }
@@ -358,14 +367,40 @@ char* get_status(int status){
 	}
 }
 
+char* get_file_type(http_request *req){
+	
+	char* path = req->path;
+	if(strcmp(path, "/") == 0)path = "index.html";
+	else path = &path[1];
+
+	char* ext = strchr(path, '.');
+	//fprintf(stderr, "\nEXT = %s", ext);
+
+	if(strcmp(ext, ".html") == 0){
+		return "text/html";
+	}
+	else if(strcmp(ext, ".txt") == 0){
+		return "text/plain";
+	}
+	else if(strcmp(ext, ".png") == 0){
+		return "image/png";
+	}
+	else{
+		req->status = 400;
+		return "unknown";
+	}
+}
+
 char* get_file(http_request *req){
+
 	char *path = req->path;
+
 	if(strcmp(path, "/") == 0)path = "index.html";
 	else path = &path[1];
 
 	//printf("\nGot path %s", path);
 
-	FILE *fp = fopen(path, "r");
+	FILE *fp = fopen(path, "rb");
 	if(!fp){
 		req->status = 404;
 		return NULL;
@@ -375,12 +410,10 @@ char* get_file(http_request *req){
 
 	fseek(fp, 0, SEEK_END);
 	int size = ftell(fp);
+	//printf("\nSize 1 = %d", size);
 	fseek(fp, 0, SEEK_SET);	
 
-	//printf("\nGot size %d", size);
-
-
-	char *buff = calloc(sizeof(char), size+1);
+	char *buff = calloc(size+1, sizeof(char));
 	if(!buff)error("ERROR on calloc buff");
 
 	fread(buff, sizeof(char), size, fp);
@@ -388,8 +421,9 @@ char* get_file(http_request *req){
 	//printf("\nGot buff size %d", (int)strlen(buff));
 	
 	//printf("\nGot FILE \n%s", buff);
+	//fwrite(buff, 1000, 1, stdout);
 
-	req->status = 200;
+	req->content_length = size;
 	fclose(fp);
 	return buff;		
 }

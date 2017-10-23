@@ -16,3 +16,4 @@ char* method_str(http_method);
 void handle_req(int, http_request*);
 char* get_file(http_request*);
 char* get_status(int);
+char* get_file_type(http_request*);
