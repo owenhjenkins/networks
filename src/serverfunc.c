@@ -11,38 +11,53 @@
 #include <stdbool.h>
 #include <pthread.h>
 
+// http method enum
 typedef enum http_meth {GET, POST, HEAD, UNKNOWN} http_method;
 
+// http header structure
 typedef struct http_head {
 	char* name;
 	char* value;
 } http_header;
 
+// http request structure
 typedef struct http_req {
-	http_method method;
-	char* path;
-	float version;
-	int header_num;
-	http_header** headers;
-	int status;
-	int content_length;
+	http_method method;			// method
+	char* path;				// requested resource
+	float version;				// http version
+	int header_num;				// number of headers
+	http_header** headers;			// attached headers
+	int status;				// status of request (for the response)
+	int content_length;			// content length of resource requested
 } http_request;
 
 // global variables
 int buff_size = 1;
+char* dir = NULL;
 
+///
+/// critical error, stop the server
+///
 void error(char *msg){
 	perror(msg);
 	exit(1);
 }
 
+///
+/// error on one of the client threads
+///
 void error_thread(char* msg){
 	fprintf(stderr, "%s", msg);
 }
 
-void start_server(char *address, char *port){
+///
+/// begin the server, using the directory given for resources and the port number given
+///
+void start_server(char* directory, char *port){
 
-	printf("Attempting to initialize server at address %s.\n",  address);
+	dir = directory;
+
+	printf("Attempting to initialize server at port %s.\n",  port);
 
 	// sockfd, newsockfd - file descriptors to store the locations of the sockets
 	// clilen - the size of the address of the client
@@ -75,9 +90,8 @@ void start_server(char *address, char *port){
 	// convert port number to host byte order
 	serv_addr.sin6_port = htons(portno);
 
-	// gets the ip address of the machine this is running on
-	if(inet_pton(AF_INET6, address, serv_addr.sin6_addr.s6_addr) < 0)
-		error("ERROR on setting server address");
+	serv_addr.sin6_family = AF_INET6;
+	serv_addr.sin6_addr = in6addr_any;
 
 	printf("Attempting to bind to port %d.\n", portno);
 
@@ -112,9 +126,12 @@ void start_server(char *address, char *port){
 	}	
 }
 
-// called when a new pthread is created
+///
+/// called when a new pthread is created
+///
 void *handle_client(void *param){
 	
+	// get the socket from the parameters
 	int socket = *(int*)param;
 
 	// buffer to store characters read
@@ -130,6 +147,7 @@ void *handle_client(void *param){
 	bool connected = true;
 	while(connected){	
 
+		// while connected, initialize lines to store any request
 		char **lines = NULL;
 		bool http_read = false;
 		while(!http_read){
@@ -144,7 +162,10 @@ void *handle_client(void *param){
 			}	
 
 			if(*buffer == '\n' && check_newline){		
-			
+	
+				// we have reached the end of a header line,
+				// initialize a new line and store the characters 
+				// read since the last line			
 				char **new = malloc(sizeof(char *) * (line_num + 1));
 				if(!new){
 					error_thread("ERROR on malloc new");
@@ -163,6 +184,8 @@ void *handle_client(void *param){
 				line_num++;		
 
 				if(!backlog){
+
+					// we have read the entire header
 					http_read = true;
 					backlog = NULL;
 					backlog_size = 1;
@@ -175,9 +198,11 @@ void *handle_client(void *param){
 				check_newline = false;
 			} 
 			else if(*buffer == '\r'){
+				// we expect a LF next to signify a new line
 				check_newline = true;
 			}
 			else{			
+				// make the buffer bigger and store the read character
 				char *new = malloc(sizeof(char) * (backlog_size + 1));
 				if(!new){
 					error_thread("ERROR on malloc new");
@@ -198,6 +223,8 @@ void *handle_client(void *param){
 		}		
 		
 		if(lines){
+
+			// we got lines, so parse the http request
 			char** start_lines = &lines[0];
 			while(!lines[0]){
 				free(lines[0]);
@@ -207,6 +234,7 @@ void *handle_client(void *param){
 
 			http_request *req = parse_http(lines, line_num-1);				
 			if(req){
+				// if we successfully parsed a request, handle it
 				print_http(req);			
 				handle_req(socket, req);				
 				free_http(req);				
@@ -230,6 +258,9 @@ void *handle_client(void *param){
 	pthread_exit(&result);
 }
 
+///
+/// given a list of lines and a number of lines, attempt to parse an http request
+///
 http_request* parse_http(char** lines, int line_num){
 	
 	http_request *req = malloc(sizeof(http_request));
@@ -242,6 +273,8 @@ http_request* parse_http(char** lines, int line_num){
 
 	for(int i = 0; i < initial_length; i++){
 		if(initial[i] == ' '){
+
+			// we reached the end of the method section
 			if(strcmp(acc, "GET") == 0){
 				method = GET;
 				req->status = 500;
@@ -263,6 +296,8 @@ http_request* parse_http(char** lines, int line_num){
 			} 
 		}
 		else{
+		
+			// not at the end of the method section yet, carry on reading chars
 			char* new = calloc(length + 1, sizeof(char));
 			if(!new){
 				error_thread("ERROR on calloc new");
@@ -277,7 +312,6 @@ http_request* parse_http(char** lines, int line_num){
 	}
 
 	req->method = method;
-
 	int method_length = strlen(acc);
 	free(acc);
 	acc = NULL;
@@ -285,10 +319,14 @@ http_request* parse_http(char** lines, int line_num){
 
 	for(int i = method_length + 1; i < initial_length; i++){
 		if(initial[i] == ' '){
+		
+			// we reached the end of the path
 			req->path = acc;
 			break;
 		}
 		else{
+
+			// not at the end of the path yet, carry on reading chars
 			char* new = calloc(length + 1, sizeof(char));
 			if(!new){
 				error_thread("ERROR on calloc new");
@@ -304,8 +342,10 @@ http_request* parse_http(char** lines, int line_num){
 
 	int path_length = strlen(acc);
 
+	// extract the version number from the remaining characters in the first line
 	req->version = atof(&initial[method_length + path_length + 7]);
 	
+	// add the headers to the request, parsed into structures
 	http_header** headers = malloc(sizeof(http_header) * (line_num-1));
 	if(!headers){
 		error_thread("ERROR on malloc headers");
@@ -319,26 +359,35 @@ http_request* parse_http(char** lines, int line_num){
 	int pointer = 0;	
 
 	for(int i = 1; i < line_num; i++){
+
+		// create a new structure for each header line
 		http_header* head = malloc(sizeof(http_header));
 		if(!head){
 			error_thread("ERROR on malloc head");
 			return NULL;			
 		}
 		
+		// get the name and value of each line
 		head->name = strtok(lines[i], ":");
 		head->value = strtok(NULL, ":");
 	
 		headers[pointer] = head;
 		pointer++;
 	}
+
+	// set some remaining fields and return the parsed request object
 	req->headers = headers;
 	req->header_num = line_num-1;
 	req->content_length = 0;
 	return req;
 }
 
+///
+/// given an http request object, handle it and serve the resource
+///
 void handle_req(int socket, http_request *req){
 
+	// get some info about the resource for the response header
 	int file_length;
 	char* file = get_file(req);
 	if(file)file_length = req->content_length;
@@ -354,26 +403,32 @@ void handle_req(int socket, http_request *req){
 	char* status = get_status(req->status);
 	char* file_type = get_file_type(req);
 
+	// calculate the size of the buffer needed
 	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
 
-	printf("\nGot total length %d", total_length);
 	char* buff = calloc(total_length + 1, sizeof(char));
 	if(!buff){
 		error_thread("ERROR on calloc buff");
 		return;			
 	}
 
-
+	// construct the http response string
 	sprintf(buff, "%s %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
  
 	printf("\n\nHTTP Response Details ========== \n%s\n", buff);
+	
+	// write the response header and resource
 	write(socket, buff, total_length);
 	write(socket, file, file_length);
 	
+	// free the used memory
 	if(file)free(file);
 	if(buff)free(buff);
 }
 
+///
+/// given a status code, return an information string
+///
 char* get_status(int status){
 	switch(status){
 	case 200: return "OK";
@@ -384,13 +439,18 @@ char* get_status(int status){
 	}
 }
 
+///
+/// get the type of a file requested by an http request
+///
 char* get_file_type(http_request *req){
 
 	char* path = req->path;
 
-	char* ext = strchr(path, '.');
+	// get the file extension from the end of the string
+	char* ext = strrchr(path, '.');
 	if(!ext) return "text/html";
 
+	// return the appropriate content type
 	if(strcmp(ext, ".txt") == 0){
 		return "text/plain";
 	}
@@ -400,78 +460,182 @@ char* get_file_type(http_request *req){
 	else return "text/html";
 }
 
+///
+/// append the given directory to the start of a resource path
+/// if free_path is true, also free the old path as this memory was previously alloc'd
+///
+char* append_dir(char* path, bool free_path){
+	if(dir){
+		int dir_length = strlen(dir);
+		int path_length = strlen(path);
+	
+		// create a new bigger buffer to store both strings
+		char* new = calloc(dir_length + 2 + path_length, sizeof(char));
+		if(!new){
+			error_thread("ERROR on calloc new");
+			return NULL;			
+		}
+
+		// combine the strings and return the result
+		sprintf(new, "%s/%s", dir, path);
+		if(free_path)free(path);
+		return new;
+	}
+	else{
+		return path;
+	}
+}
+
+///
+/// given an http request, return the resource requested
+///
 char* get_file(http_request *req){
+
+	FILE *fp;
 
 	// bad request	
 	if(req->status == 400){
 		free(req->path);
-		req->path = "pages/400.html";
-	}
-
-	char* path = req->path;
-	int pos = strcspn(req->path, "/");
-	if(pos == 0)path = &path[1];
-
-	FILE *fp;
-
-	// if forbidden path = 403
-	if(strstr(path, "../")){
-		req->status = 403;
-		free(req->path);
-		req->path = "pages/403.html";
-		fp = fopen(req->path, "rb");
-		if(!fp){
-			return NULL;
-		}
+		req->path = append_dir("/400.html", false);
 	}
 	else{
+
+		// add the file directory given when server was started
+		req->path = append_dir(req->path, true);
+		char* path = req->path;
 	
-		if(strlen(path) == 0){
+		// if forbidden path = 403
+		if(strstr(path, "../")){
+			req->status = 403;
+
 			free(req->path);
-			req->path = "pages/index.html";
-			fp = fopen(req->path, "rb");
+			
+			// replace the path with 403 file
+			req->path = append_dir("/403.html", false);
+			path = req->path;
+			
+			// remove any '/'s from the start
+			int i = 0;			
+			while(path[i] == '/'){
+				path = &path[i+1];
+			}
+			fp = fopen(path, "rb");
+			
+			if(!fp){
+				// no 403 file
+				return NULL;
+			}
+		}
+		else if(path[strlen(path)-1] == '/'){
+
+			// replace the path with the index file
+			char* new = calloc(strlen(path) + 2 + strlen("index.html"), sizeof(char));
+			if(!new){
+				error_thread("ERROR on calloc new");
+				return NULL;			
+			}				
+			sprintf(new, "%s/%s", path, "index.html");
+			free(req->path);
+			req->path = new;
+			path = req->path;
+
+			// remove any '/'s from the start	
+			int i = 0;			
+			while(path[i] == '/'){
+				path = &path[i+1];
+			}
+
+			// open the file
+			fp = fopen(path, "rb");
+	
+			if(!fp){
 				
+				// doesn't exist, so
+				// replace the path with 404 file
+				req->status = 404;
+				free(req->path);
+				req->path = append_dir("/404.html", false);
+				path = req->path;
+
+				// remove any '/'s from the start
+				int i = 0;			
+				while(path[i] == '/'){
+					path = &path[i+1];
+				}
+				fp = fopen(path, "rb");
+			}
+			if(!fp){
+				// no 404 file
+				return NULL;
+			}
 		}
-		else fp = fopen(path, "rb");
-		// if file cannot be found = 404		
-		if(!fp){
-			req->status = 404;
-			free(req->path);
-			req->path = "pages/404.html";
-			fp = fopen(req->path, "rb");
-		}
-		if(!fp){
-			req->status = 404;
-			return NULL;
+		else {
+			// remove any '/'s from the start
+			int i = 0;
+			while(path[i] == '/'){
+				path = &path[i+1];
+			}
+			fp = fopen(path, "rb");
+
+			// if file cannot be found = 404		
+			if(!fp){
+
+				// replace the path with 404 file
+				req->status = 404;
+				free(req->path);
+				req->path = append_dir("/404.html", false);
+				path = req->path;
+
+				// remove any '/'s from the start
+				int i = 0;			
+				while(path[i] == '/'){
+					path = &path[i+1];
+				}
+				fp = fopen(path, "rb");
+			}
+			if(!fp){
+				// no 404 file
+				return NULL;
+			}
 		}
 	}
 
+	// get the size of the file
 	fseek(fp, 0, SEEK_END);
 	int size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);	
 
+	// create a buffer of that size
 	char *buff = calloc(size+1, sizeof(char));
 	if(!buff){
 		error_thread("ERROR on calloc buff");
 		return NULL;			
 	}
 
+	// read the file into the buffer
 	fread(buff, sizeof(char), size, fp);
 
+	// set the content length and close the file
 	req->content_length = size;
 	fclose(fp);
+
 	return buff;		
 }
 
+///
+/// free an array of char arrays
+///
 void free_lines(char** lines, int line_num){
 	for(int i = 0; i < line_num; i++){
 		if(lines[i])free(lines[i]);
 	}
 }
 
-void free_http(http_request *req){
-	printf("\nFreeing %s\n", req->path);	
-	if(strcspn(req->path, "/") == 0)free(req->path);
+///
+/// free an http request structure
+///
+void free_http(http_request *req){	
+	free(req->path);
 	for(int i = 0; i < req->header_num; i++){
 		free(req->headers[i]);
 	}	
@@ -479,6 +643,9 @@ void free_http(http_request *req){
 	free(req);
 }
 
+///
+/// print an array of char arrays
+///
 void print_lines(char** lines, int line_num){
 	if(!lines)printf("\n	EMPTY");
 	for(int i = 0; i < line_num; i++){
@@ -486,6 +653,9 @@ void print_lines(char** lines, int line_num){
 	}
 }
 
+///
+/// print an http structure
+/// 
 void print_http(http_request *req){
 	printf("\n\nHTTP Request Details ==========");
 	printf("\nMethod: %s", method_str(req->method));
@@ -500,6 +670,9 @@ void print_http(http_request *req){
 	printf("\n");
 }
 
+///
+/// get the string representation of an http method enum
+///
 char *method_str(http_method meth){
 	switch(meth){
 		case GET: return "GET";

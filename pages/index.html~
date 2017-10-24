@@ -6,10 +6,12 @@
 	<BODY>
 		<P><H1>Hello World!</H1></P>
 		
-		<IMG src="/computer.png" alt="Computer">
+		<IMG src="images/computer.png" alt="Computer">
 		<UL>
-			<LI><A href="/info.html">About Me</A></LI>
-			<LI><A href="/else.html">Anything Else</A></LI>
+			<LI><A href="info.html">About Me</A></LI>
+			<LI><A href="else.html">Anything Else</A></LI>
+			<LI><A href="blog/">Blog Posts</A></LI>
+			<LI><A href="blog/post.html">Blog Post 1</A></LI>
 		</UL>
 	</BODY>
 </HTML>
