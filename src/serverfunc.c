@@ -10,7 +10,6 @@
 #include <strings.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <signal.h>
 
 typedef enum http_meth {GET, POST, HEAD, UNKNOWN} http_method;
 
@@ -206,18 +205,18 @@ void *handle_client(void *param){
 				line_num--;	
 			}
 
-			http_request *req = parse_http(lines, line_num-1);
+			http_request *req = parse_http(lines, line_num-1);				
 			if(req){
 				print_http(req);			
 				handle_req(socket, req);				
-				free_http(req);		
-				free_lines(lines, line_num);	
-				free(start_lines);			
+				free_http(req);				
 			}
 			else{
 				error_thread("ERROR parsing http req");
 				connected = false;		
 			}
+			free_lines(lines, line_num);	
+			free(start_lines);
 		}
 	}			
 
@@ -411,14 +410,7 @@ char* get_file(http_request *req){
 
 	char* path = req->path;
 	int pos = strcspn(req->path, "/");
-	if(pos == 0){
-		if(strlen(path) == 1){
-			free(req->path);
-			req->path = "pages/index.html";
-			path = req->path;	
-		}
-		else path = &path[1];
-	}
+	if(pos == 0)path = &path[1];
 
 	FILE *fp;
 
@@ -433,7 +425,14 @@ char* get_file(http_request *req){
 		}
 	}
 	else{
-		fp = fopen(path, "rb");
+	
+		if(strlen(path) == 0){
+			free(req->path);
+			req->path = "pages/index.html";
+			fp = fopen(req->path, "rb");
+				
+		}
+		else fp = fopen(path, "rb");
 		// if file cannot be found = 404		
 		if(!fp){
 			req->status = 404;
@@ -471,7 +470,8 @@ void free_lines(char** lines, int line_num){
 }
 
 void free_http(http_request *req){
-	free(req->path);
+	printf("\nFreeing %s\n", req->path);	
+	if(strcspn(req->path, "/") == 0)free(req->path);
 	for(int i = 0; i < req->header_num; i++){
 		free(req->headers[i]);
 	}	
