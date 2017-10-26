@@ -10,6 +10,7 @@
 #include <strings.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include "zlib/zlib.h"
 
 // http method enum
 typedef enum http_meth {GET, POST, HEAD, UNKNOWN} http_method;
@@ -32,8 +33,92 @@ typedef struct http_req {
 } http_request;
 
 // global variables
-int buff_size = 1;
 char* dir = NULL;
+
+#define CHUNK 16384
+
+char* zlib_compress(char *source, int length){
+
+	//printf("\nCOMPRESSING %s\n", source);
+
+	int ret, flush;
+	unsigned have;
+	z_stream strm;
+	unsigned char in[CHUNK];
+	unsigned char out[CHUNK];
+
+	z_stream stream;
+
+	strm.zalloc = Z_NULL;
+	strm.zfree = Z_NULL;
+	strm.opaque = Z_NULL;
+
+	char* dest = calloc(length, sizeof(char));
+
+	stream.avail_in = (uInt)length;
+	stream.next_in = (Bytef *)source;
+	stream.avail_out = (uInt)length;
+	stream.next_out = (Bytef *)dest;
+
+	deflateInit(&stream, Z_BEST_COMPRESSION);
+	deflate(&stream, Z_FINISH);
+	deflateEnd(&stream);
+
+	/*char* uncomp = calloc(length, sizeof(char));
+
+	z_stream infstream;
+    infstream.zalloc = Z_NULL;
+    infstream.zfree = Z_NULL;
+    infstream.opaque = Z_NULL;
+    // setup "b" as the input and "c" as the compressed output
+    infstream.avail_in = (uInt)((char*)stream.next_out - dest); // size of input
+    infstream.next_in = (Bytef *)dest; // input char array
+    infstream.avail_out = (uInt)length; // size of output
+    infstream.next_out = (Bytef *)uncomp; // output char array
+     
+    // the actual DE-compression work.
+    inflateInit(&infstream);
+    inflate(&infstream, Z_NO_FLUSH);
+inflateEnd(&infstream);*/
+
+	//printf("\nGOT %s\n", (char*)dest);
+
+	free(source);
+	return (char*)dest;
+
+/*	ret = deflateInit(&strm, level);
+	if(ret != Z_OK)return ret;
+
+	do{
+		strm.avail_in = fread(in, 1, CHUNK, source);
+		if(ferror(source)){
+			(void)deflateEnd(&strm);
+			return Z_ERRNO;
+		}
+		flush = feof(source) ? Z_FINISH : Z_NO_FLUSH;
+		strm.next_in = in;
+	
+		do{
+
+			strm.avail_out = CHUNK;
+			strm.next_out = out;
+			ret = deflate(&strm, flush);
+			assert(ret != Z_STREAM_ERROR);
+		
+			have = CHUNK - strm.avail_out;
+			if(fwrite(out, 1, have, dest) != have || ferror(dest)){
+				(void)deflateEnd(&strm);
+				return Z_ERRNO;
+			}
+		} while(strm.avail_out == 0);
+		assert(strm.avail_in == 0);
+	} while(flush != Z_FINISH);
+	assert(ret == Z_STREAM_END);
+
+	(void)deflateEnd(&strm);
+	return Z_OK; */
+}
+
 
 ///
 /// critical error, stop the server
@@ -155,7 +240,7 @@ void *handle_client(void *param){
 			// use the new fd, block until the client sends characters
 			// read either the total number of characters, or buff_size
 			// return the number of characters read, in the buffer	
-			int n = read(socket, buffer, buff_size);
+			int n = read(socket, buffer, 1);
 			if(n <= 0){
 				connected = false;			
 				break;
@@ -404,7 +489,7 @@ void handle_req(int socket, http_request *req){
 	char* file_type = get_file_type(req);
 
 	// calculate the size of the buffer needed
-	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
+	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Encoding: deflate") + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
 
 	char* buff = calloc(total_length + 1, sizeof(char));
 	if(!buff){
@@ -413,13 +498,15 @@ void handle_req(int socket, http_request *req){
 	}
 
 	// construct the http response string
-	sprintf(buff, "%s %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
+	sprintf(buff, "%s %d %s\r\nContent-Type: %s\r\nContent-Encoding: deflate\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
  
 	printf("\n\nHTTP Response Details ========== \n%s\n", buff);
-	
+
 	// write the response header and resource
 	write(socket, buff, total_length);
-	write(socket, file, file_length);
+	file = zlib_compress(file, file_length);
+	printf("\n%s\n", file);	
+	write(socket, file, strlen(file));
 	
 	// free the used memory
 	if(file)free(file);

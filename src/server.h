@@ -7,6 +7,8 @@ typedef struct http_req http_request;
 
 
 
+char* zlib_compress(char*, int);
+
 
 // SERVER FUNCTIONAL METHODS
 
