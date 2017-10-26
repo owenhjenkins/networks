@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-lz -pthread -I./src -std=c99
+CFLAGS= -lssl -lcrypto -pthread -I./src -std=c99
 DEPS = src/server.h
 
 all: src/servermain.o src/serverfunc.o 

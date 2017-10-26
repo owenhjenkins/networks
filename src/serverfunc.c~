@@ -10,7 +10,9 @@
 #include <strings.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include "zlib/zlib.h"
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 // http method enum
 typedef enum http_meth {GET, POST, HEAD, UNKNOWN} http_method;
@@ -35,90 +37,7 @@ typedef struct http_req {
 // global variables
 char* dir = NULL;
 
-#define CHUNK 16384
-
-char* zlib_compress(char *source, int length){
-
-	//printf("\nCOMPRESSING %s\n", source);
-
-	int ret, flush;
-	unsigned have;
-	z_stream strm;
-	unsigned char in[CHUNK];
-	unsigned char out[CHUNK];
-
-	z_stream stream;
-
-	strm.zalloc = Z_NULL;
-	strm.zfree = Z_NULL;
-	strm.opaque = Z_NULL;
-
-	char* dest = calloc(length, sizeof(char));
-
-	stream.avail_in = (uInt)length;
-	stream.next_in = (Bytef *)source;
-	stream.avail_out = (uInt)length;
-	stream.next_out = (Bytef *)dest;
-
-	deflateInit(&stream, Z_BEST_COMPRESSION);
-	deflate(&stream, Z_FINISH);
-	deflateEnd(&stream);
-
-	/*char* uncomp = calloc(length, sizeof(char));
-
-	z_stream infstream;
-    infstream.zalloc = Z_NULL;
-    infstream.zfree = Z_NULL;
-    infstream.opaque = Z_NULL;
-    // setup "b" as the input and "c" as the compressed output
-    infstream.avail_in = (uInt)((char*)stream.next_out - dest); // size of input
-    infstream.next_in = (Bytef *)dest; // input char array
-    infstream.avail_out = (uInt)length; // size of output
-    infstream.next_out = (Bytef *)uncomp; // output char array
-     
-    // the actual DE-compression work.
-    inflateInit(&infstream);
-    inflate(&infstream, Z_NO_FLUSH);
-inflateEnd(&infstream);*/
-
-	//printf("\nGOT %s\n", (char*)dest);
-
-	free(source);
-	return (char*)dest;
-
-/*	ret = deflateInit(&strm, level);
-	if(ret != Z_OK)return ret;
-
-	do{
-		strm.avail_in = fread(in, 1, CHUNK, source);
-		if(ferror(source)){
-			(void)deflateEnd(&strm);
-			return Z_ERRNO;
-		}
-		flush = feof(source) ? Z_FINISH : Z_NO_FLUSH;
-		strm.next_in = in;
-	
-		do{
-
-			strm.avail_out = CHUNK;
-			strm.next_out = out;
-			ret = deflate(&strm, flush);
-			assert(ret != Z_STREAM_ERROR);
-		
-			have = CHUNK - strm.avail_out;
-			if(fwrite(out, 1, have, dest) != have || ferror(dest)){
-				(void)deflateEnd(&strm);
-				return Z_ERRNO;
-			}
-		} while(strm.avail_out == 0);
-		assert(strm.avail_in == 0);
-	} while(flush != Z_FINISH);
-	assert(ret == Z_STREAM_END);
-
-	(void)deflateEnd(&strm);
-	return Z_OK; */
-}
-
+SSL_CTX *ctx;
 
 ///
 /// critical error, stop the server
@@ -140,6 +59,28 @@ void error_thread(char* msg){
 ///
 void start_server(char* directory, char *port){
 
+	OpenSSL_add_ssl_algorithms();
+	SSL_load_error_strings();
+	SSL_library_init();
+
+	const SSL_METHOD *method;
+	method = SSLv23_server_method();
+	ctx = SSL_CTX_new(method);
+	if(!ctx) {
+	       	printf("\ncontext\n");
+	       	exit(EXIT_FAILURE);
+    	}
+
+	//SSL_CTX_set_ecdh_auto(ctx, 1);
+	if(SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0){
+		printf("\ncert\n");     	
+		exit(EXIT_FAILURE);
+	}
+	if(SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0){
+		printf("\nkey\n");
+	        exit(EXIT_FAILURE);
+	}
+
 	dir = directory;
 
 	printf("Attempting to initialize server at port %s.\n",  port);
@@ -160,14 +101,9 @@ void start_server(char* directory, char *port){
 	// type of socket - SOCK_STREAM for continuous stream
 	// protocol - 0 for auto choosing the most appropriate	
 	sockfd = socket(AF_INET6, SOCK_STREAM, 0);
-	if(sockfd < 0) error("ERROR opening socket");	
-
-	// set socket options to resuable after we quit
-	int tru = 1;
-	int opt = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &tru, sizeof(int));
-	if(opt < 0)error("ERROR setting socket options.");	
-
-	// initialize the whole server address to zero
+	if(sockfd < 0){
+		error("ERROR creating socket");	
+	}
 	bzero((char*) &serv_addr, sizeof(serv_addr));
 
 	serv_addr.sin6_family = AF_INET6; 
@@ -216,8 +152,21 @@ void start_server(char* directory, char *port){
 ///
 void *handle_client(void *param){
 	
+	SSL *ssl;
+	ssl = SSL_new(ctx);
+	if(!ssl)printf("\nNULL SSL!\n");
+
 	// get the socket from the parameters
 	int socket = *(int*)param;
+
+	int val = SSL_set_fd(ssl, socket);
+	printf("\nSET FD = %d\n", val);
+
+	printf("\n%p\n", ssl);
+
+	int ret = SSL_accept(ssl);
+	printf("\nRET = %d\n", ret);
+	if(ret > 0){
 
 	// buffer to store characters read
 	char buffer[1];
@@ -240,8 +189,15 @@ void *handle_client(void *param){
 			// use the new fd, block until the client sends characters
 			// read either the total number of characters, or buff_size
 			// return the number of characters read, in the buffer	
-			int n = read(socket, buffer, 1);
-			if(n <= 0){
+			int n = SSL_read(ssl, buffer, 1);
+			//int n = read(socket, buffer, 1);
+			//printf("\n\nRead %d\n", n);			
+			if(n < 0){
+				error_thread("ERROR on read");
+				connected = false;
+				break;
+			}			
+			else if(n == 0){
 				connected = false;			
 				break;
 			}	
@@ -264,11 +220,29 @@ void *handle_client(void *param){
 	
 				if(lines)free(lines);
 	
-				new[line_num] = backlog;
+				// make the buffer bigger and add a null terminator
+//				char *new_line = malloc(sizeof(char) * (backlog_size + 1));
+//				if(!new_line){
+//					error_thread("ERROR on malloc new_line");
+//					connected = false;
+//					break;				
+//				}
+//				bzero(new_line, (backlog_size + 1));
+//				
+//				if(backlog)strcpy(new_line, backlog);	
+//		
+//				if(backlog)free(backlog);			
+//	
+//				new_line[backlog_size-1] = '\0';
+
+				new[line_num] = backlog;//new_line;
 				lines = new;
 				line_num++;		
 
 				if(!backlog){
+
+					
+					backlog_size++;
 
 					// we have read the entire header
 					http_read = true;
@@ -317,11 +291,12 @@ void *handle_client(void *param){
 				line_num--;	
 			}
 
+			print_lines(lines, line_num-1);
 			http_request *req = parse_http(lines, line_num-1);				
 			if(req){
-				// if we successfully parsed a request, handle it
+				// if we successfully parsed a request, handle it				
 				print_http(req);			
-				handle_req(socket, req);				
+				handle_req(ssl, req);				
 				free_http(req);				
 			}
 			else{
@@ -334,6 +309,7 @@ void *handle_client(void *param){
 	}			
 
 	// close the socket when a client has disconnected
+	SSL_free(ssl);	
 	close(socket);
 	printf("\n[%d | client disconnected]\n", (int)pthread_self());
 	result = 0;
@@ -341,6 +317,12 @@ void *handle_client(void *param){
 	// exit the thread, making sure storage used can be reclaimed
 	pthread_detach(pthread_self());
 	pthread_exit(&result);
+} else {
+		printf("\nERROR on ssl_accept, got %d\n", ret);
+		printf("\nERROR = %d\n", SSL_get_error(ssl, ret));
+		printf("\n%d\n", SSL_ERROR_SSL);
+		ERR_print_errors_fp(stderr);
+	}
 }
 
 ///
@@ -446,13 +428,14 @@ http_request* parse_http(char** lines, int line_num){
 	for(int i = 1; i < line_num; i++){
 
 		// create a new structure for each header line
-		http_header* head = malloc(sizeof(http_header));
+		http_header* head = calloc(1, sizeof(http_header));
 		if(!head){
 			error_thread("ERROR on malloc head");
 			return NULL;			
 		}
 		
 		// get the name and value of each line
+		printf("\nLINES[I] = %s\n", lines[i]);
 		head->name = strtok(lines[i], ":");
 		head->value = strtok(NULL, ":");
 	
@@ -470,7 +453,7 @@ http_request* parse_http(char** lines, int line_num){
 ///
 /// given an http request object, handle it and serve the resource
 ///
-void handle_req(int socket, http_request *req){
+void handle_req(SSL *ssl, http_request *req){
 
 	// get some info about the resource for the response header
 	int file_length;
@@ -489,7 +472,7 @@ void handle_req(int socket, http_request *req){
 	char* file_type = get_file_type(req);
 
 	// calculate the size of the buffer needed
-	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Encoding: deflate") + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
+	int total_length = strlen(version) + sizeof(int) + strlen(status) + strlen("\r\nContent-Type: ") + strlen(file_type) + strlen("\r\nContent-Length: ") + sizeof(int) + strlen("\r\n\r\n") + 3;
 
 	char* buff = calloc(total_length + 1, sizeof(char));
 	if(!buff){
@@ -498,15 +481,13 @@ void handle_req(int socket, http_request *req){
 	}
 
 	// construct the http response string
-	sprintf(buff, "%s %d %s\r\nContent-Encoding: deflate\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
+	sprintf(buff, "%s %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", version, req->status, status, file_type, file_length);
  
 	printf("\n\nHTTP Response Details ========== \n%s\n", buff);
-
+	
 	// write the response header and resource
-	write(socket, buff, total_length);
-	file = zlib_compress(file, file_length);
-	printf("\n%s\n", file);	
-	write(socket, file, strlen(file));
+	SSL_write(ssl, buff, total_length);
+	SSL_write(ssl, file, file_length);
 	
 	// free the used memory
 	if(file)free(file);
@@ -745,14 +726,14 @@ void print_lines(char** lines, int line_num){
 /// 
 void print_http(http_request *req){
 	printf("\n\nHTTP Request Details ==========");
-	printf("\nMethod: %s", method_str(req->method));
-	printf("\nPath:   %s", req->path);
-	printf("\nVer:    %.1f", req->version);
-	printf("\nHeaders:");
+	//printf("\nMethod: %s", method_str(req->method));
+	//printf("\nPath:   %s", req->path);
+	//printf("\nVer:    %.1f", req->version);
+	//printf("\nHeaders:");
 	for(int i = 0; i < req->header_num; i++){
 		http_header** headers = req->headers;		
 		http_header* header = headers[i];
-		printf("\n -- %s : %s", header->name, header->value);	
+	//	printf("\n -- %s : %s", header->name, header->value);	
 	}
 	printf("\n");
 }

@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <openssl/ssl.h>
 
 // structures/enum needed
 typedef enum http_meth http_method;
@@ -7,7 +8,7 @@ typedef struct http_req http_request;
 
 
 
-char* zlib_compress(char*, int);
+char* zlib_compress(char*, http_request*);
 
 
 // SERVER FUNCTIONAL METHODS
@@ -22,7 +23,7 @@ void* handle_client(void*);
 http_request* parse_http(char**, int);
 
 // serve a resource requested
-void handle_req(int, http_request*);
+void handle_req(SSL*, http_request*);
 
 // get a resource from a request
 char* get_file(http_request*);
