@@ -271,7 +271,6 @@ void *handle_client(void *param){
 			}
 			free_lines(lines, line_num);	
 			free(start_lines);
-                        connected = false;
 		}
 		
 	

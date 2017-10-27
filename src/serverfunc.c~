@@ -271,6 +271,7 @@ void *handle_client(void *param){
 			}
 			free_lines(lines, line_num);	
 			free(start_lines);
+                        connected = false;
 		}
 		
 	
@@ -402,7 +403,7 @@ http_request* parse_http(char** lines, int line_num){
 		}
 		
 		// get the name and value of each line
-		printf("\nLINES[I] = %s\n", lines[i]);
+		//printf("\nLINES[I] = %s\n", lines[i]);
 		head->name = strtok(lines[i], ":");
 		head->value = strtok(NULL, ":");
 	
