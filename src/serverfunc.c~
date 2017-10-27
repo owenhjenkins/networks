@@ -35,9 +35,8 @@ typedef struct http_req {
 } http_request;
 
 // global variables
-char* dir = NULL;
-
-SSL_CTX *ctx;
+char* dir = NULL;				// directory of the web files
+SSL_CTX *ctx;					// ssl context
 
 ///
 /// critical error, stop the server
@@ -59,26 +58,23 @@ void error_thread(char* msg){
 ///
 void start_server(char* directory, char *port){
 
+	// initialize ssl and create the ssl context
 	OpenSSL_add_ssl_algorithms();
 	SSL_load_error_strings();
 	SSL_library_init();
-
 	const SSL_METHOD *method;
 	method = SSLv23_server_method();
 	ctx = SSL_CTX_new(method);
 	if(!ctx) {
-	       	printf("\ncontext\n");
-	       	exit(EXIT_FAILURE);
+	       	error("ERROR creating SSL context");
     	}
 
-	//SSL_CTX_set_ecdh_auto(ctx, 1);
+	// set up the private key and certificates to use
 	if(SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0){
-		printf("\ncert\n");     	
-		exit(EXIT_FAILURE);
+		error("ERROR loading certificate file");
 	}
 	if(SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0){
-		printf("\nkey\n");
-	        exit(EXIT_FAILURE);
+		error("ERROR loading key file (wrong password?)");
 	}
 
 	dir = directory;
@@ -86,13 +82,11 @@ void start_server(char* directory, char *port){
 	printf("Attempting to initialize server at port %s.\n",  port);
 
 	// sockfd, newsockfd - file descriptors to store the locations of the sockets
-	// clilen - the size of the address of the client
-	// n - number of characters read or written
 	int sockfd;
 
 	int portno = atoi(port);
 
-	// structures to store the server and client addresses 
+	// structure to store the server address
 	struct sockaddr_in6 serv_addr;
 
 	// Create a socket
@@ -110,7 +104,6 @@ void start_server(char* directory, char *port){
 
 	// convert port number to host byte order
 	serv_addr.sin6_port = htons(portno);
-
 	serv_addr.sin6_family = AF_INET6;
 	serv_addr.sin6_addr = in6addr_any;
 
@@ -152,53 +145,47 @@ void start_server(char* directory, char *port){
 ///
 void *handle_client(void *param){
 	
+	// initialize the ssl structure and use the context
 	SSL *ssl;
 	ssl = SSL_new(ctx);
-	if(!ssl)printf("\nNULL SSL!\n");
+	if(!ssl){
+		error("ERROR creating ssl struct");
+	}
 
 	// get the socket from the parameters
 	int socket = *(int*)param;
 
-	int val = SSL_set_fd(ssl, socket);
-	printf("\nSET FD = %d\n", val);
+	if(SSL_set_fd(ssl, socket) != 1){
+		error("ERROR setting ssl to socket fd");
+	}
 
-	printf("\n%p\n", ssl);
+	if(SSL_accept(ssl) > 0){
 
-	int ret = SSL_accept(ssl);
-	printf("\nRET = %d\n", ret);
-	if(ret > 0){
-
-	// buffer to store characters read
-	char buffer[1];
-
-	int line_num = 0;
-	char *backlog = NULL;	
-	int backlog_size = 1;
-
-	bool check_newline = false;
-
-	int result;
-	bool connected = true;
-	while(connected){	
-
+		// buffer to store characters read
+		char buffer[1];
+	
+		int line_num = 0;
+		char *backlog = NULL;	
+		int backlog_size = 1;
+	
+		bool check_newline = false;
+	
+		int result;	
+	
 		// while connected, initialize lines to store any request
-		char **lines = NULL;
+		char **lines = NULL;	
 		bool http_read = false;
 		while(!http_read){
-	
+
 			// use the new fd, block until the client sends characters
 			// read either the total number of characters, or buff_size
 			// return the number of characters read, in the buffer	
-			int n = SSL_read(ssl, buffer, 1);
-			//int n = read(socket, buffer, 1);
-			//printf("\n\nRead %d\n", n);			
+			int n = SSL_read(ssl, buffer, 1);		
 			if(n < 0){
 				error_thread("ERROR on read");
-				connected = false;
 				break;
 			}			
-			else if(n == 0){
-				connected = false;			
+			else if(n == 0){			
 				break;
 			}	
 
@@ -210,7 +197,6 @@ void *handle_client(void *param){
 				char **new = malloc(sizeof(char *) * (line_num + 1));
 				if(!new){
 					error_thread("ERROR on malloc new");
-					connected = false;
 					break;				
 				}
 				for(int i = 0; i < line_num+1; i++){
@@ -218,32 +204,15 @@ void *handle_client(void *param){
 				}		
 				if(lines)memcpy(new, lines, (sizeof(char *) * line_num));
 	
-				if(lines)free(lines);
-	
-				// make the buffer bigger and add a null terminator
-//				char *new_line = malloc(sizeof(char) * (backlog_size + 1));
-//				if(!new_line){
-//					error_thread("ERROR on malloc new_line");
-//					connected = false;
-//					break;				
-//				}
-//				bzero(new_line, (backlog_size + 1));
-//				
-//				if(backlog)strcpy(new_line, backlog);	
-//		
-//				if(backlog)free(backlog);			
-//	
-//				new_line[backlog_size-1] = '\0';
-
+				if(lines)free(lines);	
 				new[line_num] = backlog;//new_line;
 				lines = new;
 				line_num++;		
 
 				if(!backlog){
-
-					
+						
 					backlog_size++;
-
+	
 					// we have read the entire header
 					http_read = true;
 					backlog = NULL;
@@ -265,24 +234,23 @@ void *handle_client(void *param){
 				char *new = malloc(sizeof(char) * (backlog_size + 1));
 				if(!new){
 					error_thread("ERROR on malloc new");
-					connected = false;
 					break;				
 				}
 				bzero(new, (backlog_size + 1));
-				
+					
 				if(backlog)strcpy(new, backlog);	
-	
+		
 				if(backlog)free(backlog);			
-
+	
 				new[backlog_size-1] = *buffer;
-				
+					
 				backlog = new;
 				backlog_size++;
 			}
 		}		
 		
 		if(lines){
-
+	
 			// we got lines, so parse the http request
 			char** start_lines = &lines[0];
 			while(!lines[0]){
@@ -290,8 +258,7 @@ void *handle_client(void *param){
 				lines = &lines[1];
 				line_num--;	
 			}
-
-			print_lines(lines, line_num-1);
+	
 			http_request *req = parse_http(lines, line_num-1);				
 			if(req){
 				// if we successfully parsed a request, handle it				
@@ -300,28 +267,26 @@ void *handle_client(void *param){
 				free_http(req);				
 			}
 			else{
-				error_thread("ERROR parsing http req");
-				connected = false;		
+				error_thread("ERROR parsing http req");		
 			}
 			free_lines(lines, line_num);	
 			free(start_lines);
 		}
-	}			
-
-	// close the socket when a client has disconnected
-	SSL_free(ssl);	
-	close(socket);
-	printf("\n[%d | client disconnected]\n", (int)pthread_self());
-	result = 0;
-
-	// exit the thread, making sure storage used can be reclaimed
-	pthread_detach(pthread_self());
-	pthread_exit(&result);
-} else {
-		printf("\nERROR on ssl_accept, got %d\n", ret);
-		printf("\nERROR = %d\n", SSL_get_error(ssl, ret));
-		printf("\n%d\n", SSL_ERROR_SSL);
+		
+	
+		// close the socket when the request has been read
+		SSL_free(ssl);	
+		close(socket);
+		printf("\n[%d | client disconnected]\n", (int)pthread_self());
+		result = 0;
+	
+		// exit the thread, making sure storage used can be reclaimed
+		pthread_detach(pthread_self());
+		pthread_exit(&result);
+	} 
+	else {
 		ERR_print_errors_fp(stderr);
+		error("ERROR on ssl accept (not using https?)");
 	}
 }
 
@@ -338,6 +303,7 @@ http_request* parse_http(char** lines, int line_num){
 	http_method method;		
 	int initial_length = (int)strlen(initial);
 
+	// read the http method
 	for(int i = 0; i < initial_length; i++){
 		if(initial[i] == ' '){
 
@@ -384,6 +350,7 @@ http_request* parse_http(char** lines, int line_num){
 	acc = NULL;
 	length = 1;
 
+	// read the resource path
 	for(int i = method_length + 1; i < initial_length; i++){
 		if(initial[i] == ' '){
 		
@@ -428,7 +395,7 @@ http_request* parse_http(char** lines, int line_num){
 	for(int i = 1; i < line_num; i++){
 
 		// create a new structure for each header line
-		http_header* head = calloc(1, sizeof(http_header));
+		http_header* head = malloc(sizeof(http_header));
 		if(!head){
 			error_thread("ERROR on malloc head");
 			return NULL;			
