@@ -162,7 +162,7 @@ void *handle_client(void *param){
 	int val = SSL_set_fd(ssl, socket);
 	//printf("\nSET FD = %d\n", val);
 
-	//printf("\n%p\n", ssl);
+	printf("\n%p\n", ssl);
 
 	int ret = SSL_accept(ssl);
 	//printf("\nRET = %d\n", ret);
@@ -305,7 +305,7 @@ void *handle_client(void *param){
 			}
 			free_lines(lines, line_num);	
 			free(start_lines);
-                        connected = false;
+			connected = false;
 		}
 	}			
 
@@ -320,7 +320,7 @@ void *handle_client(void *param){
 	pthread_exit(&result);
 } else {
 		printf("\nERROR on ssl_accept, got %d\n", ret);
-		printf("\nERROR = %d\n", SSL_get_error(ssl, ret));
+		printf("ERROR = %d\n", SSL_get_error(ssl, ret));
 		//printf("\n%d\n", SSL_ERROR_SSL);
 		ERR_print_errors_fp(stderr);
 	}
