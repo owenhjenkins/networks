@@ -6,11 +6,6 @@ typedef enum http_meth http_method;
 typedef struct http_head http_header;
 typedef struct http_req http_request;
 
-
-
-char* zlib_compress(char*, http_request*);
-
-
 // SERVER FUNCTIONAL METHODS
 
 // start the server

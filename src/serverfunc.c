@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <server.h>
+#include "server.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
@@ -70,10 +70,10 @@ void start_server(char* directory, char *port){
     	}
 
 	// set up the private key and certificates to use
-	if(SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0){
+	if(SSL_CTX_use_certificate_file(ctx, "src/cert.pem", SSL_FILETYPE_PEM) <= 0){
 		error("ERROR loading certificate file");
 	}
-	if(SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0){
+	if(SSL_CTX_use_PrivateKey_file(ctx, "src/key.pem", SSL_FILETYPE_PEM) <= 0){
 		error("ERROR loading key file (wrong password?)");
 	}
 
@@ -379,6 +379,11 @@ http_request* parse_http(char** lines, int line_num){
 	// extract the version number from the remaining characters in the first line
 	req->version = atof(&initial[method_length + path_length + 7]);
 	
+	// if the http version is incorrect then set the correct response header	
+	if(!req->version || !(req->version == 1.0f || req->version == 1.1f)){
+		req->status = 505;
+	}
+
 	// add the headers to the request, parsed into structures
 	http_header** headers = malloc(sizeof(http_header) * (line_num-1));
 	if(!headers){
@@ -400,6 +405,8 @@ http_request* parse_http(char** lines, int line_num){
 			error_thread("ERROR on malloc head");
 			return NULL;			
 		}
+		head->name = NULL;
+		head->value = NULL;
 		
 		// get the name and value of each line
 		//printf("\nLINES[I] = %s\n", lines[i]);
@@ -470,6 +477,7 @@ char* get_status(int status){
 	case 400: return "Bad Request";
 	case 403: return "Forbidden";
 	case 404: return "Not Found";
+	case 505: return "HTTP Version Not Supported";
 	default: return "Internal Server Error";
 	}
 }
@@ -489,8 +497,50 @@ char* get_file_type(http_request *req){
 	if(strcmp(ext, ".txt") == 0){
 		return "text/plain";
 	}
+	else if(strcmp(ext, ".bin") == 0){
+		return "application/octet-stream";
+	}
+	else if(strcmp(ext, ".js") == 0){
+		return "application/javascript";
+	}
+	else if(strcmp(ext, ".pdf") == 0){
+		return "application/pdf";
+	}	
+	else if(strcmp(ext, ".sh") == 0){
+		return "application/x-sh";
+	}
+	else if(strcmp(ext, ".tar") == 0){
+		return "application/x-tar";
+	}
+	else if(strcmp(ext, ".7z") == 0){
+		return "application/x-7z-compressed";
+	}
+	else if(strcmp(ext, ".xml") == 0){
+		return "application/xml";
+	}
+	else if(strcmp(ext, ".zip") == 0){
+		return "application/zip";
+	}
+	else if(strcmp(ext, ".css") == 0){
+		return "text/css";
+	}
+	else if(strcmp(ext, ".csv") == 0){
+		return "text/csv";
+	}
+	else if(strcmp(ext, ".gif") == 0){
+		return "image/gif";
+	}
+	else if(strcmp(ext, ".ico") == 0){
+		return "image/x-icon";
+	}
 	else if(strcmp(ext, ".png") == 0){
 		return "image/png";
+	}
+	else if(strcmp(ext, ".jpg") == 0){
+		return "image/jpeg";
+	}
+	else if(strcmp(ext, ".jpeg") == 0){
+		return "image/jpeg";
 	}
 	else return "text/html";
 }
@@ -532,6 +582,11 @@ char* get_file(http_request *req){
 	if(req->status == 400){
 		free(req->path);
 		req->path = append_dir("/400.html", false);
+	}
+	// wrong HTTP version
+	else if(req->status == 505){
+		free(req->path);
+		req->path = append_dir("/505.html", false);
 	}
 	else{
 
@@ -635,26 +690,29 @@ char* get_file(http_request *req){
 		}
 	}
 
-	// get the size of the file
-	fseek(fp, 0, SEEK_END);
-	int size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);	
+	if(fp){
+		// get the size of the file
+		fseek(fp, 0, SEEK_END);
+		int size = ftell(fp);
+		fseek(fp, 0, SEEK_SET);	
+	
+		// create a buffer of that size
+		char *buff = calloc(size+1, sizeof(char));
+		if(!buff){
+			error_thread("ERROR on calloc buff");
+			return NULL;			
+		}
+	
+		// read the file into the buffer
+		fread(buff, sizeof(char), size, fp);
+	
+		// set the content length and close the file
+		req->content_length = size;
+		fclose(fp);
 
-	// create a buffer of that size
-	char *buff = calloc(size+1, sizeof(char));
-	if(!buff){
-		error_thread("ERROR on calloc buff");
-		return NULL;			
+		return buff;
 	}
-
-	// read the file into the buffer
-	fread(buff, sizeof(char), size, fp);
-
-	// set the content length and close the file
-	req->content_length = size;
-	fclose(fp);
-
-	return buff;		
+	else return NULL;		
 }
 
 ///
@@ -693,14 +751,14 @@ void print_lines(char** lines, int line_num){
 /// 
 void print_http(http_request *req){
 	printf("\n\nHTTP Request Details ==========");
-	//printf("\nMethod: %s", method_str(req->method));
-	//printf("\nPath:   %s", req->path);
-	//printf("\nVer:    %.1f", req->version);
-	//printf("\nHeaders:");
+	printf("\nMethod: %s", method_str(req->method));
+	printf("\nPath:   %s", req->path);
+	printf("\nVer:    %.1f", req->version);
+	printf("\nHeaders:");
 	for(int i = 0; i < req->header_num; i++){
 		http_header** headers = req->headers;		
 		http_header* header = headers[i];
-	//	printf("\n -- %s : %s", header->name, header->value);	
+		printf("\n -- %s : %s", header->name, header->value);	
 	}
 	printf("\n");
 }
